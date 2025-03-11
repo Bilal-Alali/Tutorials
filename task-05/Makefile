@@ -19,6 +19,7 @@ QUIET ?= 1
 USEMODULE += shell
 USEMODULE += shell_cmds_default
 USEMODULE += ps
+USEMODULE += netdev_default
 USEMODULE += gnrc_pktdump
 USEMODULE += gnrc_txtsnd
 USEMODULE += auto_init_gnrc_netif

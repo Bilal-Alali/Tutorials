@@ -1,79 +1,31 @@
-[previous task](../task-06)
+# gnrc_minimal example
 
-# Task 7: The GNRC network stack
+This is a minimalistic example for RIOT's gnrc network stack.
+The application will auto initialize the device's default network interface and
+the IPv6 stack and print its link-local address.
+You can ping the printed address from another device to check if the node is
+alive. Please note that you may have to disable 6LoWPAN header compression
+(IPHC), since this example does not include it. In the `gnrc_networking`
+example or any other application with GNRC and a shell, you can do so by
+calling `ifconfig <if_id> -iphc`).
 
-This task is a little bit more advanced so don't be discouraged if things are
-a little bit harder. With the knowledge you gathered from the previous tasks
-you should be able to handle it.
+The example demonstrates how one can reduce the memory footprint of a `gnrc`
+application by enabling only the minimum subset of features and setting
+configuration options to smaller values than the default. In particular, this
+reduction of memory consumption in comparison to the `gnrc_networking` example
+is achieved by:
+ * Using only the `gnrc_ipv6` and `gnrc_ndp` modules (instead of
+   `gnrc_ipv6_router_default`). This configures the node as a IPv6/6LoWPAN host
+   instead of a router and disable optional features such as 6LoWPAN IPHC or
+   fragmentation.
+ * Not using `gnrc_rpl`.
+ * Disabling features meant for helping during development and debugging such
+   as the shell or setting the `DEVELHELP` flag.
+ * Using the minimal standard pseudo random number generator instead of the
+   Mersenne Twister.
+ * Reducing the number of configurable IPv6 addresses per interface to 4
+   (instead of 7 or 8).
+ * Reducing the packet buffer size from 6kB to 512 bytes.
+ * Reducing the maximum neighbor cache size from 8 to 1.
 
-It uses the [example applications in the RIOT repository](https://github.com/RIOT-OS/RIOT/tree/master/examples).
-
-## Task 7.1: Compile the `gnrc_minimal` application
-* Go to the [`gnrc_minimal` application](https://github.com/RIOT-OS/RIOT/tree/master/examples/gnrc_minimal)
-* Compile and run on `native`
-* Should print something like `My address is fe80::d403:24ff:fe89:2460`
-* Ping RIOT instance from Linux:
-
-```sh
-ping <RIOT-IPv6-addr>%tapbr0
-```
-Note: on MAC use `bridge0` instead of `tapbr0`.
-
-## Task 7.2: Extend `gnrc_minimal` application
-* Add the `gnrc_udp` module to the application's
-[Makefile](https://github.com/RIOT-OS/RIOT/blob/master/examples/gnrc_minimal/Makefile)
-* To be able to receive packets, a [message queue](http://doc.riot-os.org/group__net__gnrc.html) must be 
-  created using [msg_init_queue](https://doc.riot-os.org/group__core__msg.html#ga480e6f32c8ab18579b62a890f3fda2cd):
-
-```C
-msg_t msg_queue[num];
-msg_init_queue(msg_queue, num);
-```
-
-Note: `num` must be in powers of 2.
-
-* You can register for packets of a certain type and context (port 8888 in our
-  case) using `gnrc_netreg_register()` from [`net/gnrc/netreg.h`](https://doc.riot-os.org/group__net__gnrc__netreg.html):
-* The current thread can be obtained with the `thread_getpid()` function from
-  `thread.h`
-
-```C
-gnrc_netreg_entry_t server = GNRC_NETREG_ENTRY_INIT_PID(8888, thread_getpid());
-gnrc_netreg_register(GNRC_NETTYPE_UDP, &server);
-```
-
-* Packets can be received using the IPC receive function [msg_receive()](https://doc.riot-os.org/group__core__msg.html#gae3e05f08bd71d6f65dc727624c4d5f7a):
-
-```C
-msg_t msg;
-msg_receive(&msg);
-```
-
-Remember to remove the packet after reception (otherwise the packet buffer
-will overflow)!
-
-```C
-#include "net/gnrc/pktbuf.h"
-
-/* ... */
-
-gnrc_pktsnip_t *pkt = (gnrc_pktsnip_t *)msg.content.ptr;
-gnrc_pktbuf_release(pkt);
-```
-
-
-1.  Extend `gnrc_minimal` as such that it counts received UDP packets on port 8888.
-2.  Use `netcat` on your host to test your application on native node.
-
-## Task 7.3: Send your neighbor some messages again
-* Go to the [`gnrc_networking` application](https://github.com/RIOT-OS/RIOT/tree/master/examples/gnrc_networking)
-* Have a look in `udp.c` how packets are constructed and send
-* Compile, flash, and run on the board `BOARD=samr21-xpro make all flash term`
-* Type `help`
-* Start UDP server on port 8888 using `udp server 8888`
-* Get your IPv6 address using `ifconfig`
-* Send your neighbor some messages using `udp send`
-
-[Read the Doc](https://doc.riot-os.org/group__net__gnrc.html)
-
-[next task](../task-08)
+Please take a look at the Makefile to see how the configuration is done.

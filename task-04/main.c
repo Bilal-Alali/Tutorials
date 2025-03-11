@@ -27,9 +27,9 @@ void *thread_handler(void *arg)
     uint64_t elapsed_time = end_time - start_time;
     printf("Elapsed time: %" PRIu64 " microseconds\n", elapsed_time);
 
-    // Sleep for another 1 second (1000000 microseconds)
-    printf("Sleeping for 1 second...\n");
-    xtimer_usleep(1000000);
+    // Sleep for another 2 second (1000000 microseconds)
+    printf("Sleeping for 2 second...\n");
+    xtimer_usleep(2000000);
 
     // Print time again after usleep
     uint64_t final_time = xtimer_now_usec();
