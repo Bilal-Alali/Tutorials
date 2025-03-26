@@ -34,11 +34,17 @@ USEMODULE += wolfssl_dtls
 # Select public key algorithm (or PSK) support fot ciphersuite(s):
 USEMODULE += wolfcrypt_ecc
 USEMODULE += wolfcrypt_rsa wolfcrypt_dh
-USEMODULE += wolfssl_psk
-USEMODULE += wolfcrypt_rsa
+CFLAGS += -Wall
+#USEMODULE += wolfssl_psk
+#USEMODULE += wolfcrypt_rsa
 # Configure wolfSSL (enable TLS 1.2)
-CFLAGS += -DWOLFSSL_TLS13
-CFLAGS += -DWOLFSSL_TLS12
+#CFLAGS += -DWOLFSSL_TLS13 -DWOLFSSL_TLS12
+# Define the necessary options for TLS 1.3
+#CFLAGS += -DHAVE_FFDHE_2048
+#CFLAGS += -DWC_RSA_PSS
+
+SRC += main.c
+SRC += tls.c
 
 
 # Uncomment the following line to add debug symbols
@@ -47,6 +53,10 @@ CFLAGS += -DWOLFSSL_TLS12
 # Timer module
 USEMODULE += ztimer
 USEMODULE += ztimer_msec
+
+CFLAGS += -DGNRC_TCP
+CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
+
 
 # Comment this out to disable code in RIOT that does safety checking
 # which is not needed in a production environment but helps in the

@@ -17,9 +17,6 @@
 #include "ztimer.h"
 #include "log.h"
 
-#define ENABLE_DEBUG 0
-#include "debug.h"
-
 /* Default TLS read/write timeout in milliseconds -> 30 sec*/
 #define TLS_DEFAULT_TIMEOUT 30000
 
