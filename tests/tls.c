@@ -1,33 +1,16 @@
-
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
+#include <errno.h>
 #include "net/sock/tcp.h"
 #include "tls.h"
 #include <wolfssl/ssl.h>
-#include <wolfssl/internal.h>
+#include <wolfssl/error-ssl.h>
 #include "ztimer.h"
-#include "log.h"
-#include <errno.h>
-#include "debug.h"
-#include "wolfssl/ssl.h"
-#include "wolfssl/error-ssl.h"
-/* Default TLS read/write timeout in milliseconds -> 30 sec*/
+
+
+/* Default TLS read/write timeout in milliseconds -> 30 sec */
 #define TLS_DEFAULT_TIMEOUT 30000
-
-static int _wolfssl_tcp_receive(WOLFSSL *ssl, char *buf, int sz, void *ctx);
-static int _wolfssl_tcp_send(WOLFSSL *ssl, char *buf, int sz, void *ctx);
-
-/* Callbacks for wolfSSL I/O operations */
-static GetTcpRecvTimeoutCallback get_tcp_recv_timeout_callback = NULL;
-
-/**
- * @brief Set callback function for TCP receive timeout (man bekommt den Timeout dynamisch)
- */
-void sock_tls_tcp_set_recv_timeout_callback(GetTcpRecvTimeoutCallback callback)
-{
-    get_tcp_recv_timeout_callback = callback;
-}
 
 int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method)
 {
@@ -53,14 +36,8 @@ int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method)
         return -ENOMEM;
     }
 
-    /* Set the custom I/O functions */
-    wolfSSL_CTX_SetIORecv(sock->ctx, _wolfssl_tcp_receive);
-    wolfSSL_CTX_SetIOSend(sock->ctx, _wolfssl_tcp_send);
-
-
-    /* Set the custom context object */
-    wolfSSL_SetIOReadCtx(sock->ssl, sock);
-    wolfSSL_SetIOWriteCtx(sock->ssl, sock);
+    /* Set the timeout for the SSL session */
+    wolfSSL_set_timeout(sock->ssl, TLS_DEFAULT_TIMEOUT);
 
     return 0;
 }
@@ -79,6 +56,9 @@ int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote, uint
         DEBUG("Failed to establish TCP connection: %d\n", ret);
         return ret;  // Return the actual error code from sock_tcp_connect
     }
+
+    /* Associate the socket file descriptor with the SSL object */
+    wolfSSL_set_fd(sock->ssl, sock->tcp_sock.conn);
 
     /* Start the TLS handshake */
     ret = wolfSSL_connect(sock->ssl);
@@ -171,13 +151,11 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *tls_queue, sock_tls_tcp_t **sock, 
         return -ENOMEM;
     }
 
-    /* Set the custom I/O functions */
-    wolfSSL_CTX_SetIORecv((*sock)->ctx, _wolfssl_tcp_receive);
-    wolfSSL_CTX_SetIOSend((*sock)->ctx, _wolfssl_tcp_send);
+    /* Associate the socket file descriptor with the SSL object */
+    wolfSSL_set_fd((*sock)->ssl, (*sock)->tcp_sock.conn);
 
-    /* Set the custom context object */
-    wolfSSL_SetIOReadCtx((*sock)->ssl, *sock);
-    wolfSSL_SetIOWriteCtx((*sock)->ssl, *sock);
+    /* Set the timeout for the SSL session */
+    wolfSSL_set_timeout((*sock)->ssl, TLS_DEFAULT_TIMEOUT);
 
     /* Accept TLS connection (perform handshake) */
     ret = wolfSSL_accept((*sock)->ssl);
@@ -194,87 +172,76 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *tls_queue, sock_tls_tcp_t **sock, 
     return 0;
 }
 
-
-/**
- * @brief Custom I/O receive function for wolfSSL
- */
-static int _wolfssl_tcp_receive(WOLFSSL *ssl, char *buf, int sz, void *ctx)
+ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len, uint32_t timeout)
 {
-    sock_tls_tcp_t *sock = (sock_tls_tcp_t *)(ssl->gnrcCtx);
-
-    if (!sock) {
-        return WOLFSSL_CBIO_ERR_GENERAL;
+    if (!sock || !data || max_len == 0) {
+        return -EINVAL;
     }
 
-    /* Uses the default timeout or the one provided by the callback*/
-    int timeout = TLS_DEFAULT_TIMEOUT;
-    if (get_tcp_recv_timeout_callback) {
-        timeout = get_tcp_recv_timeout_callback(ctx);
-    }
-
-    int recv_len = 0;
-    ztimer_now_t end_time = ztimer_now(ZTIMER_MSEC) + timeout;
-    ssize_t bytes_read;
-
-    do {
-        /* Tries to read data from the TCP socket with a 1-second timeout -> smaller timeout data */
-        bytes_read = sock_tcp_read(&sock->tcp_sock, buf + recv_len, sz - recv_len, 1000);
-
-        if (bytes_read > 0) {
-            recv_len += bytes_read;
-        }
-
-        /* Continue reading if we still have time and haven't filled the buffer. Continues reading until: The buffer is full. No more data is available. The timeout is reached. */
-    } while ((recv_len < sz) && (bytes_read > 0) && (ztimer_now(ZTIMER_MSEC) < end_time));
-
-    if (recv_len > 0) {
-        return recv_len;
-    }
-    else {
-        switch (bytes_read) {
-            case -ETIMEDOUT:
-                return WOLFSSL_CBIO_ERR_WANT_READ;
-            case -EAGAIN:
-                return WOLFSSL_CBIO_ERR_WANT_READ;
-            case 0:
-                DEBUG("Connection closed by peer\n");
-                return WOLFSSL_CBIO_ERR_CONN_CLOSE;
-            default:
-                DEBUG("Error while receiving data: %d\n", (int)bytes_read);
-                break;
-        }
+    /* Read data using wolfSSL_read */
+    ssize_t bytes_read = wolfSSL_read(sock->ssl, data, max_len);
+    if (bytes_read < 0) {
+        int err = wolfSSL_get_error(sock->ssl, bytes_read);
+        DEBUG("Error while reading data: %d\n", err);
+        return -ECONNRESET;
     }
 
     return bytes_read;
 }
 
-
-/**
- * @brief Custom I/O send function for wolfSSL
- */
-static int _wolfssl_tcp_send(WOLFSSL *ssl, char *buf, int sz, void *ctx)
+ssize_t sock_tls_tcp_write(sock_tls_tcp_t *sock, const void *data, size_t len)
 {
-    (void)ctx; // Marked 'ctx' as unused
-    sock_tls_tcp_t *sock = (sock_tls_tcp_t *)(ssl->gnrcCtx);
-
-    if (!sock) {
-        return WOLFSSL_CBIO_ERR_GENERAL;
+    if (!sock || !data || len == 0) {
+        return -EINVAL;
     }
 
-    ssize_t bytes_written = sock_tcp_write(&sock->tcp_sock, buf, sz);
-
-    if (bytes_written >= 0) {
-        return bytes_written;
+    /* Write data using wolfSSL_write */
+    ssize_t bytes_written = wolfSSL_write(sock->ssl, data, len);
+    if (bytes_written < 0) {
+        int err = wolfSSL_get_error(sock->ssl, bytes_written);
+        DEBUG("Error while writing data: %d\n", err);
+        return -ECONNRESET;
     }
-    else {
-        switch (bytes_written) {
-            case -EAGAIN:
-                return WOLFSSL_CBIO_ERR_WANT_WRITE;
-            case -ECONNRESET:
-                return WOLFSSL_CBIO_ERR_CONN_CLOSE;
-            default:
-                DEBUG("Error while sending data: %d\n", (int)bytes_written);
-                return WOLFSSL_CBIO_ERR_GENERAL;
-        }
+
+    return bytes_written;
+}
+
+void sock_tls_tcp_disconnect(sock_tls_tcp_t *sock)
+{
+    if (sock) {
+        wolfSSL_shutdown(sock->ssl);
+        wolfSSL_free(sock->ssl);
+        wolfSSL_CTX_free(sock->ctx);
+        sock_tcp_disconnect(&sock->tcp_sock);
+        free(sock);
+    }
+}
+
+int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock, const unsigned char *cert_buf, unsigned int cert_len, const unsigned char *key_buf, unsigned int key_len, int type)
+{
+    if (!sock || !cert_buf || cert_len == 0 || !key_buf || key_len == 0) {
+        return -EINVAL;
+    }
+
+    /* Load certificate and key */
+    int ret = wolfSSL_use_certificate_buffer(sock->ssl, cert_buf, cert_len, type);
+    if (ret != SSL_SUCCESS) {
+        DEBUG("Failed to load certificate: %d\n", ret);
+        return -EINVAL;
+    }
+
+    ret = wolfSSL_use_PrivateKey_buffer(sock->ssl, key_buf, key_len, type);
+    if (ret != SSL_SUCCESS) {
+        DEBUG("Failed to load private key: %d\n", ret);
+        return -EINVAL;
+    }
+
+    return 0;
+}
+
+void sock_tls_tcp_set_timeout(sock_tls_tcp_t *sock, unsigned int timeout)
+{
+    if (sock) {
+        wolfSSL_set_timeout(sock->ssl, timeout);
     }
 }

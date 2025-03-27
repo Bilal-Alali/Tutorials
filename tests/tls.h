@@ -97,16 +97,13 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock,
  * @param[in] sock      Socket to read from
  * @param[out] data     Buffer to read into
  * @param[in] max_len   Maximum number of bytes to read
- * @param[in] timeout   Timeout in microseconds, 0 for no timeout
  *
  * @return  Number of bytes read on success
  * @return  0 if the connection was closed by the peer
  * @return  -EINVAL if @p sock or @p data is NULL or @p max_len is 0
- * @return  -EAGAIN if no data is available but connection is still active
  * @return  -ECONNRESET if the connection was closed unexpectedly
  */
-ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len,
-                         uint32_t timeout);
+ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len);
 
 /**
  * @brief   Write data to a TLS connection
@@ -117,7 +114,6 @@ ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len,
  *
  * @return  Number of bytes written on success
  * @return  -EINVAL if @p sock or @p data is NULL or @p len is 0
- * @return  -EAGAIN if not all data could be written
  * @return  -ECONNRESET if the connection was closed unexpectedly
  */
 ssize_t sock_tls_tcp_write(sock_tls_tcp_t *sock, const void *data, size_t len);
@@ -154,9 +150,6 @@ int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock,
  * @param[in] timeout   New timeout value in microseconds
  */
 void sock_tls_tcp_set_timeout(sock_tls_tcp_t *sock, unsigned int timeout);
-
-typedef int (*GetTcpRecvTimeoutCallback)(void *ctx);
-
 
 #ifdef __cplusplus
 }
