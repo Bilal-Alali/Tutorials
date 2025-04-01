@@ -35,7 +35,7 @@ CFLAGS += -DGNRC_TCP
 CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
 
 # Enable debug symbols
-CFLAGS += -DDEBUG
+#CFLAGS += -DDEBUG
 
 # Comment this out to disable code in RIOT that does safety checking
 DEVELHELP ?= 1

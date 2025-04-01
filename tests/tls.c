@@ -7,7 +7,7 @@
 #include <wolfssl/ssl.h>
 #include <wolfssl/error-ssl.h>
 #include "ztimer.h"
-
+#include "debug.h"
 
 /* Default TLS read/write timeout in milliseconds -> 30 sec */
 #define TLS_DEFAULT_TIMEOUT 30000
@@ -57,8 +57,13 @@ int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote, uint
         return ret;  // Return the actual error code from sock_tcp_connect
     }
 
-    /* Associate the socket file descriptor with the SSL object */
-    wolfSSL_set_fd(sock->ssl, sock->tcp_sock.conn);
+    /* Set the custom I/O functions */
+    wolfSSL_SetIORecv(sock->ssl, _wolfssl_tcp_receive);
+    wolfSSL_SetIOSend(sock->ssl, _wolfssl_tcp_send);
+
+    /* Set the custom context object */
+    wolfSSL_SetIOReadCtx(sock->ssl, sock);
+    wolfSSL_SetIOWriteCtx(sock->ssl, sock);
 
     /* Start the TLS handshake */
     ret = wolfSSL_connect(sock->ssl);
@@ -151,8 +156,13 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *tls_queue, sock_tls_tcp_t **sock, 
         return -ENOMEM;
     }
 
-    /* Associate the socket file descriptor with the SSL object */
-    wolfSSL_set_fd((*sock)->ssl, (*sock)->tcp_sock.conn);
+    /* Set the custom I/O functions */
+    wolfSSL_SetIORecv((*sock)->ssl, _wolfssl_tcp_receive);
+    wolfSSL_SetIOSend((*sock)->ssl, _wolfssl_tcp_send);
+
+    /* Set the custom context object */
+    wolfSSL_SetIOReadCtx((*sock)->ssl, *sock);
+    wolfSSL_SetIOWriteCtx((*sock)->ssl, *sock);
 
     /* Set the timeout for the SSL session */
     wolfSSL_set_timeout((*sock)->ssl, TLS_DEFAULT_TIMEOUT);
@@ -216,7 +226,7 @@ void sock_tls_tcp_disconnect(sock_tls_tcp_t *sock)
         free(sock);
     }
 }
-
+#bin als default
 int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock, const unsigned char *cert_buf, unsigned int cert_len, const unsigned char *key_buf, unsigned int key_len, int type)
 {
     if (!sock || !cert_buf || cert_len == 0 || !key_buf || key_len == 0) {
@@ -244,4 +254,38 @@ void sock_tls_tcp_set_timeout(sock_tls_tcp_t *sock, unsigned int timeout)
     if (sock) {
         wolfSSL_set_timeout(sock->ssl, timeout);
     }
+}
+
+/* Custom I/O functions for WolfSSL to work with RIOT OS sockets */
+static int _wolfssl_tcp_receive(WOLFSSL* ssl, char* buf, int sz, void* ctx)
+{
+    sock_tls_tcp_t* sock = (sock_tls_tcp_t*)ctx;
+
+    /* Use RIOT's sock TCP API for reading */
+    int ret = sock_tcp_read(&sock->tcp_sock, buf, sz, 0);
+
+    if (ret < 0) {
+        /* Map RIOT OS error codes to WolfSSL error codes */
+        if (ret == -ETIMEDOUT) {
+            return WOLFSSL_CBIO_ERR_TIMEOUT;
+        }
+        return WOLFSSL_CBIO_ERR_GENERAL;
+    }
+
+    return ret; /* Return number of bytes read */
+}
+
+static int _wolfssl_tcp_send(WOLFSSL* ssl, char* buf, int sz, void* ctx)
+{
+    sock_tls_tcp_t* sock = (sock_tls_tcp_t*)ctx;
+
+    /* Use RIOT's sock TCP API for writing */
+    int ret = sock_tcp_write(&sock->tcp_sock, buf, sz);
+
+    if (ret < 0) {
+        /* Map RIOT OS error codes to WolfSSL error codes */
+        return WOLFSSL_CBIO_ERR_GENERAL;
+    }
+
+    return ret; /* Return number of bytes written */
 }
