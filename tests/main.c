@@ -1,157 +1,120 @@
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
-
+#include <stdlib.h>
 #include "net/sock/tcp.h"
-#include "net/af.h"
 #include "tls.h"
 #include <wolfssl/ssl.h>
-#include <wolfssl/wolfcrypt/settings.h>
+#include <wolfssl/error-ssl.h>
+#include "ztimer.h"
+#include "shell.h"
 
-#define SERVER_PORT 11111
+#define SERVER_PORT 12345
+#define SERVER_ADDR "2001:db8::1" // Replace with your server address
 #define BUFFER_SIZE 1024
 
-// Function to run TLS server
-int run_tls_server(void) {
-    sock_tcp_ep_t local_ep = {
-        .port = SERVER_PORT,
-        .addr = {{ 0 }},  // Correct initialization of address
-        .family = AF_INET6
-    };
+static int run_tls_client(int argc, char **argv);
+static int run_tls_server(int argc, char **argv);
 
-    // Prepare queue array for incoming connections
-    sock_tcp_t queue_array[1];
+static const shell_command_t shell_commands[] = {
+    {"tls_client", "Run the TLS client", run_tls_client},
+    {"tls_server", "Run the TLS server", run_tls_server},
+    {NULL, NULL, NULL}
+};
+
+static int run_tls_client(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
+    sock_tls_tcp_t tls_sock;
+    sock_tcp_ep_t remote = { .family = AF_INET6, .port = SERVER_PORT };
+    ipv6_addr_from_str((ipv6_addr_t *)&remote.addr.ipv6, SERVER_ADDR);
+
+    if (sock_tls_tcp_create(&tls_sock, wolfTLSv1_2_client_method()) < 0) {
+        puts("Failed to create TLS socket");
+        return 1;
+    }
+
+    if (sock_tls_tcp_connect(&tls_sock, &remote, 0, 0) < 0) {
+        puts("Failed to connect to server");
+        sock_tls_tcp_disconnect(&tls_sock);
+        return 1;
+    }
+
+    const char *msg = "Hello, TLS Server!";
+    if (sock_tls_tcp_write(&tls_sock, msg, strlen(msg)) < 0) {
+        puts("Failed to send message");
+        sock_tls_tcp_disconnect(&tls_sock);
+        return 1;
+    }
+
+    char buffer[BUFFER_SIZE];
+    ssize_t len = sock_tls_tcp_read(&tls_sock, buffer, sizeof(buffer));
+    if (len < 0) {
+        puts("Failed to read message");
+    } else {
+        printf("Received from server: %.*s\n", (int)len, buffer);
+    }
+
+    sock_tls_tcp_disconnect(&tls_sock);
+    return 0;
+}
+
+static int run_tls_server(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+
     sock_tls_tcp_queue_t tls_queue;
+    sock_tcp_ep_t local = { .family = AF_INET6, .port = SERVER_PORT };
+    sock_tcp_t queue_array[1];
 
-    // Create server SSL method
-    WOLFSSL_METHOD *method = wolfTLSv1_2_server_method();
-    if (!method) {
-        printf("Failed to create server method\n");
-        return -1;
+    if (sock_tls_tcp_listen(&tls_queue, &local, queue_array, 1, 0, wolfTLSv1_2_server_method()) < 0) {
+        puts("Failed to start TLS server");
+        return 1;
     }
 
-    // Start TLS listener
-    int ret = sock_tls_tcp_listen(&tls_queue, &local_ep,
-                                  queue_array, sizeof(queue_array)/sizeof(queue_array[0]),
-                                  SOCK_FLAGS_REUSE_EP, method);
-    if (ret < 0) {
-        printf("Failed to start TLS listener: %d\n", ret);
-        return ret;
+    puts("TLS server is listening...");
+
+    while (1) {
+        sock_tls_tcp_t *tls_sock;
+        if (sock_tls_tcp_accept(&tls_queue, &tls_sock, 0) < 0) {
+            puts("Failed to accept connection");
+            continue;
+        }
+
+        char buffer[BUFFER_SIZE];
+        ssize_t len = sock_tls_tcp_read(tls_sock, buffer, sizeof(buffer));
+        if (len < 0) {
+            puts("Failed to read message");
+        } else {
+            printf("Received from client: %.*s\n", (int)len, buffer);
+
+            const char *response = "Hello, TLS Client!";
+            if (sock_tls_tcp_write(tls_sock, response, strlen(response)) < 0) {
+                puts("Failed to send response");
+            }
+        }
+
+        sock_tls_tcp_disconnect(tls_sock);
     }
 
-    printf("Server listening on port %d\n", SERVER_PORT);
-
-    // Accept incoming connection
-    sock_tls_tcp_t *client_sock = NULL;
-    ret = sock_tls_tcp_accept(&tls_queue, &client_sock, 0);
-    if (ret < 0) {
-        printf("Failed to accept connection: %d\n", ret);
-        return ret;
-    }
-
-    printf("Connection accepted\n");
-
-    // Read message from client
-    char recv_buffer[BUFFER_SIZE];
-    ssize_t bytes_read = sock_tls_tcp_read(client_sock, recv_buffer, sizeof(recv_buffer));
-    if (bytes_read < 0) {
-        printf("Failed to read from client: %d\n", bytes_read);
-        sock_tls_tcp_disconnect(client_sock);
-        return bytes_read;
-    }
-
-    recv_buffer[bytes_read] = '\0';
-    printf("Received from client: %s\n", recv_buffer);
-
-    // Send response
-    const char *response = "Hello from Server!";
-    ssize_t bytes_written = sock_tls_tcp_write(client_sock, response, strlen(response));
-    if (bytes_written < 0) {
-        printf("Failed to write to client: %d\n", bytes_written);
-        sock_tls_tcp_disconnect(client_sock);
-        return bytes_written;
-    }
-
-    // Cleanup
-    sock_tls_tcp_disconnect(client_sock);
     return 0;
 }
 
-// Function to run TLS client
-int run_tls_client(void) {
-    sock_tcp_ep_t remote_ep = {
-        .port = SERVER_PORT,
-        .addr = {{ 0 }},  // Correct initialization of address
-        .family = AF_INET6
-    };
+int main(void)
+{
+    puts("RIOT TLS over TCP example application");
 
-    // Set a loopback address for local testing
-    remote_ep.addr.ipv6[15] = 1;  // ::1 (IPv6 loopback)
-
-    // Create client SSL method
-    WOLFSSL_METHOD *method = wolfTLSv1_2_client_method();
-    if (!method) {
-        printf("Failed to create client method\n");
-        return -1;
-    }
-
-    // Create TLS socket
-    sock_tls_tcp_t client_sock;
-    int ret = sock_tls_tcp_create(&client_sock, method);
-    if (ret < 0) {
-        printf("Failed to create TLS socket: %d\n", ret);
-        return ret;
-    }
-
-    // Connect to server
-    ret = sock_tls_tcp_connect(&client_sock, &remote_ep, 0, 0);
-    if (ret < 0) {
-        printf("Failed to connect to server: %d\n", ret);
-        return ret;
-    }
-
-    printf("Connected to server\n");
-
-    // Send message to server
-    const char *message = "Hello from Client!";
-    ssize_t bytes_written = sock_tls_tcp_write(&client_sock, message, strlen(message));
-    if (bytes_written < 0) {
-        printf("Failed to write to server: %d\n", bytes_written);
-        sock_tls_tcp_disconnect(&client_sock);
-        return bytes_written;
-    }
-
-    // Read response from server
-    char recv_buffer[BUFFER_SIZE];
-    ssize_t bytes_read = sock_tls_tcp_read(&client_sock, recv_buffer, sizeof(recv_buffer));
-    if (bytes_read < 0) {
-        printf("Failed to read from server: %d\n", bytes_read);
-        sock_tls_tcp_disconnect(&client_sock);
-        return bytes_read;
-    }
-
-    recv_buffer[bytes_read] = '\0';
-    printf("Received from server: %s\n", recv_buffer);
-
-    // Cleanup
-    sock_tls_tcp_disconnect(&client_sock);
-    return 0;
-}
-
-// Main function to demonstrate TLS communication
-int main(void) {
-    // Initialize WolfSSL
+    /* Initialize WolfSSL */
     wolfSSL_Init();
 
-    // Uncomment the function you want to test
-    // Server test
-    // int result = run_tls_server();
+    /* Start the shell */
+    char line_buf[SHELL_DEFAULT_BUFSIZE];
+    shell_run(shell_commands, line_buf, SHELL_DEFAULT_BUFSIZE);
 
-    // Client test
-    int result = run_tls_client();
-
-    // Cleanup WolfSSL
+    /* Cleanup WolfSSL */
     wolfSSL_Cleanup();
 
-    return result;
+    return 0;
 }

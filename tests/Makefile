@@ -22,7 +22,6 @@ USEMODULE += wolfssl
 USEMODULE += shell
 USEMODULE += shell_cmds_default
 USEMODULE += ps
-USEMODULE += log
 
 SRC += main.c
 SRC += tls.c
@@ -34,6 +33,9 @@ USEMODULE += ztimer_msec
 CFLAGS += -DGNRC_TCP
 CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
 
+# Link the WolfSSL library
+LDLIBS += -lwolfssl
+
 # Enable debug symbols
 #CFLAGS += -DDEBUG
 
@@ -44,8 +46,3 @@ DEVELHELP ?= 1
 QUIET ?= 1
 
 include $(RIOTBASE)/Makefile.include
-
-
-
-
-
