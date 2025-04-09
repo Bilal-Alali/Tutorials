@@ -56,7 +56,8 @@ int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method);
  * @return  -ECONNRESET if the connection or TLS handshake failed
  */
 int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote,
-                        uint16_t local_port, uint16_t flags);
+                        uint16_t local_port, uint16_t flags, const unsigned char *cert_buf, unsigned int cert_len,
+                        const unsigned char *key_buf, unsigned int key_len);
 
 /**
  * @brief   Start listening for TLS connections
@@ -140,8 +141,7 @@ void sock_tls_tcp_disconnect(sock_tls_tcp_t *sock);
  */
 int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock,
                              const unsigned char *cert_buf, unsigned int cert_len,
-                             const unsigned char *key_buf, unsigned int key_len,
-                             int type);
+                             const unsigned char *key_buf, unsigned int key_len);
 
 /**
  * @brief   Set timeout for a TLS connection
