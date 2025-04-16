@@ -9,7 +9,7 @@
 #include "cert_data.h"
 
 #define SERVER_PORT 12345
-#define SERVER_ADDR "fe80::b8dc:e6ff:fefd:61e"
+#define SERVER_ADDR "fe80::8a2:81ff:fecd:3113"
 #define BUFFER_SIZE 1024
 
 static int tls_client(int argc, char **argv);
@@ -37,6 +37,7 @@ static int tls_client(int argc, char **argv)
     }
 
     printf("Client: Connecting to server at %s...\n", SERVER_ADDR);
+
     if (sock_tls_tcp_connect(&tls_sock, &remote, 0, 0,
                              riot_cert_pem, riot_cert_pem_len,
                              riot_key_pem, riot_key_pem_len) < 0) {
@@ -86,7 +87,7 @@ static int tls_server(int argc, char **argv)
     while (1) {
         sock_tls_tcp_t *tls_sock;
         printf("Server: Waiting for incoming connections...\n");
-        int ret = sock_tls_tcp_accept(&tls_queue, &tls_sock, 0);
+        int ret = sock_tls_tcp_accept(&tls_queue, &tls_sock, SOCK_NO_TIMEOUT);
         if (ret < 0) {
             printf("Server: Failed to accept connection: %d\n", ret);
             continue;

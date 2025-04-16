@@ -317,18 +317,25 @@ int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock,
         return -EINVAL;
     }
 
+    printf("Certificate data first bytes: %.20s\n", (char*)cert_buf);
+    printf("Certificate length: %u\n", cert_len);
+    printf("Key data first bytes: %.20s\n", (char*)key_buf);
+    printf("Key length: %u\n", key_len);
+
     /* Load certificate */
     int ret = wolfSSL_use_certificate_buffer(sock->ssl, cert_buf, cert_len, SSL_FILETYPE_PEM);
     if (ret != SSL_SUCCESS) {
-        printf("Failed to load certificate: %d, error: %s\n", ret, wolfSSL_ERR_reason_error_string(ret));
-        return ret; // Return specific WolfSSL error code
+        int err = wolfSSL_get_error(sock->ssl, ret);
+        printf("Failed to load certificate: %d, error: %d, reason: %s\n", ret, err, wolfSSL_ERR_reason_error_string(err));
+        return ret;
     }
 
     /* Load private key */
     ret = wolfSSL_use_PrivateKey_buffer(sock->ssl, key_buf, key_len, SSL_FILETYPE_PEM);
     if (ret != SSL_SUCCESS) {
-        printf("Failed to load private key: %d, error: %s\n", ret, wolfSSL_ERR_reason_error_string(ret));
-        return ret; // Return specific WolfSSL error code
+        int err = wolfSSL_get_error(sock->ssl, ret);
+        printf("Failed to load private key: %d, error: %d, reason: %s\n", ret, err, wolfSSL_ERR_reason_error_string(err));
+        return ret;
     }
 
     /* Verify that the certificate and private key match */
