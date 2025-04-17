@@ -9,7 +9,7 @@
 #include "cert_data.h"
 
 #define SERVER_PORT 12345
-#define SERVER_ADDR "fe80::8a2:81ff:fecd:3113"
+#define SERVER_ADDR "fe80::b8dc:e6ff:fefd:61e"
 #define BUFFER_SIZE 1024
 
 static int tls_client(int argc, char **argv);
