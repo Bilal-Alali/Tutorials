@@ -1,12 +1,15 @@
-/*
- * RIOT OS TLS over TCP Socket Header
+/**
+ * @file tls.h
+ * @brief TLS over TCP socket implementation using wolfSSL for RIOT OS
+ * @author Bilal-Alali
+ * @date 2025-04-24 16:56:29
  */
 
 #ifndef SOCK_TLS_TCP_H
 #define SOCK_TLS_TCP_H
 
 #include "net/sock/tcp.h"
-#include "wolfssl/ssl.h"
+#include <wolfssl/ssl.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,7 +22,6 @@ typedef struct sock_tls_tcp {
     sock_tcp_t tcp_sock;        /**< Underlying TCP socket */
     WOLFSSL_CTX *ctx;           /**< WolfSSL context */
     WOLFSSL *ssl;               /**< WolfSSL session */
-    void *app_ctx;              /**< Application context */
 } sock_tls_tcp_t;
 
 /**
@@ -27,129 +29,108 @@ typedef struct sock_tls_tcp {
  */
 typedef struct sock_tls_tcp_queue {
     sock_tcp_queue_t tcp_queue;  /**< Underlying TCP queue */
-    WOLFSSL_METHOD *method;      /**< SSL method */
-    WOLFSSL_CTX *ctx;            /**< Pre-created context for accepted connections */
+    WOLFSSL_CTX *ctx;           /**< WolfSSL context */
 } sock_tls_tcp_queue_t;
 
 /**
- * @brief   Creates a new TLS socket for TCP connections
+ * @brief Creates a new TLS socket for TCP connections
  *
- * @param[out] sock      The socket to create
- * @param[in]  method    The WolfSSL method to use (e.g., client or server)
+ * @param[out] sock    The socket to create
+ * @param[in]  method  The WolfSSL method to use (e.g., client or server)
  *
- * @return  0 on success
- * @return  -EINVAL if @p sock or @p method is NULL
- * @return  -ENOMEM if resources could not be allocated
+ * @return 0 on success
+ * @return -EINVAL if sock or method is NULL
+ * @return -ENOMEM if resources could not be allocated
  */
 int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method);
 
 /**
- * @brief   Connect to a remote TLS server
+ * @brief Connect to a remote TLS server
  *
- * @param[in,out] sock      Socket to use for connection
- * @param[in] remote        Remote endpoint to connect to
- * @param[in] local_port    Local port to bind to (0 for random)
- * @param[in] flags         Flags for the sock_tcp_connect()
+ * @param[in,out] sock       Socket to use for connection
+ * @param[in] remote         Remote endpoint to connect to
+ * @param[in] local_port     Local port to bind to (0 for random)
+ * @param[in] flags          Flags for the sock_tcp_connect()
  *
- * @return  0 on success
- * @return  -EINVAL if @p sock or @p remote is NULL
- * @return  -ECONNRESET if the connection or TLS handshake failed
+ * @return 0 on success
+ * @return -EINVAL if sock or remote is NULL
+ * @return -ECONNRESET if the connection was reset
+ * @return -ETIMEDOUT if the connection timed out
  */
 int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote,
-                        uint16_t local_port, uint16_t flags, const unsigned char *cert_buf, unsigned int cert_len,
-                        const unsigned char *key_buf, unsigned int key_len);
+                        uint16_t local_port, uint16_t flags);
 
 /**
- * @brief   Start listening for TLS connections
+ * @brief Initialize TLS server and start listening
  *
- * @param[in,out] queue     Queue object to initialize
- * @param[in] local         Local endpoint to listen on
- * @param[in] queue_array   Array of sock_tcp_t objects for the TCP queue
- * @param[in] queue_len     Length of @p queue_array
- * @param[in] flags         Flags for sock_tcp_listen()
- * @param[in] method        WolfSSL method to use (must be server method)
+ * @param[in,out] queue      Queue object to initialize
+ * @param[in] local          Local endpoint to listen on
+ * @param[in] queue_array    Array of sock_tcp_t objects for the TCP queue
+ * @param[in] queue_len      Length of queue_array
+ * @param[in] flags          Flags for sock_tcp_listen()
+ * @param[in] method         WolfSSL method to use (must be server method)
+ * @param[in] cert_buf       Server certificate buffer in PEM format
+ * @param[in] cert_len       Length of certificate buffer
+ * @param[in] key_buf        Server private key buffer in PEM format
+ * @param[in] key_len        Length of private key buffer
  *
- * @return  0 on success
- * @return  -EINVAL if any parameter is invalid
- * @return  -ENOMEM if resources could not be allocated
+ * @return 0 on success
+ * @return -EINVAL if parameters are invalid
+ * @return -ENOMEM if resources could not be allocated
  */
 int sock_tls_tcp_listen(sock_tls_tcp_queue_t *queue, const sock_tcp_ep_t *local,
                        sock_tcp_t *queue_array, unsigned queue_len, uint16_t flags,
-                       WOLFSSL_METHOD *method);
+                       WOLFSSL_METHOD *method, const unsigned char *cert_buf,
+                       unsigned int cert_len, const unsigned char *key_buf,
+                       unsigned int key_len);
 
 /**
- * @brief   Accept an incoming TLS connection
+ * @brief Accept a new TLS connection
  *
- * @param[in] queue     Queue object to accept from
- * @param[out] sock     Pointer to allocated sock object on success
- * @param[in] timeout   Timeout for accept in microseconds, 0 for no timeout
+ * @param[in] queue    Queue to accept connection from
+ * @param[out] sock    Pointer to allocated sock_tls_tcp_t structure pointer
+ * @param[in] timeout  Timeout for accept operation in microseconds
  *
- * @return  0 on success
- * @return  -EINVAL if @p queue or @p sock is NULL
- * @return  -ETIMEDOUT if no connection request was received in @p timeout
- * @return  -ENOMEM if no memory for connection is available
+ * @return 0 on success
+ * @return -EINVAL if queue or sock is NULL
+ * @return -ENOMEM if resources could not be allocated
+ * @return -ETIMEDOUT if accept timed out
  */
 int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock,
                        uint32_t timeout);
 
 /**
- * @brief   Read data from a TLS connection
+ * @brief Read data from a TLS connection
  *
- * @param[in] sock      Socket to read from
- * @param[out] data     Buffer to read into
- * @param[in] max_len   Maximum number of bytes to read
+ * @param[in] sock     Socket to read from
+ * @param[out] data    Buffer to read into
+ * @param[in] max_len  Maximum number of bytes to read
  *
- * @return  Number of bytes read on success
- * @return  0 if the connection was closed by the peer
- * @return  -EINVAL if @p sock or @p data is NULL or @p max_len is 0
- * @return  -ECONNRESET if the connection was closed unexpectedly
+ * @return Number of bytes read on success
+ * @return -EINVAL if parameters are invalid
+ * @return -ECONNRESET if connection was reset
  */
 ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len);
 
 /**
- * @brief   Write data to a TLS connection
+ * @brief Write data to a TLS connection
  *
- * @param[in] sock      Socket to write to
- * @param[in] data      Data to write
- * @param[in] len       Length of @p data
+ * @param[in] sock    Socket to write to
+ * @param[in] data    Data to write
+ * @param[in] len     Length of data to write
  *
- * @return  Number of bytes written on success
- * @return  -EINVAL if @p sock or @p data is NULL or @p len is 0
- * @return  -ECONNRESET if the connection was closed unexpectedly
+ * @return Number of bytes written on success
+ * @return -EINVAL if parameters are invalid
+ * @return -ECONNRESET if connection was reset
  */
 ssize_t sock_tls_tcp_write(sock_tls_tcp_t *sock, const void *data, size_t len);
 
 /**
- * @brief   Disconnect and free resources of a TLS connection
+ * @brief Disconnect and cleanup a TLS connection
  *
- * @param[in] sock      Socket to disconnect
+ * @param[in] sock    Socket to disconnect
  */
 void sock_tls_tcp_disconnect(sock_tls_tcp_t *sock);
-
-/**
- * @brief   Set certificate and private key for a TLS connection
- *
- * @param[in] sock      Socket to configure
- * @param[in] cert_buf  Buffer containing certificate
- * @param[in] cert_len  Length of certificate buffer
- * @param[in] key_buf   Buffer containing private key
- * @param[in] key_len   Length of private key buffer
- * @param[in] type      Format of certificate and key (e.g., SSL_FILETYPE_PEM)
- *
- * @return  0 on success
- * @return  -EINVAL if any parameter is invalid
- */
-int sock_tls_tcp_set_cert_key(sock_tls_tcp_t *sock,
-                             const unsigned char *cert_buf, unsigned int cert_len,
-                             const unsigned char *key_buf, unsigned int key_len);
-
-/**
- * @brief   Set timeout for a TLS connection
- *
- * @param[in] sock      Socket to configure
- * @param[in] timeout   New timeout value in microseconds
- */
-void sock_tls_tcp_set_timeout(sock_tls_tcp_t *sock, unsigned int timeout);
 
 #ifdef __cplusplus
 }

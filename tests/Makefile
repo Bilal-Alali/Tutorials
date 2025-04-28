@@ -12,24 +12,33 @@ USEMODULE += netdev_default
 USEMODULE += auto_init_gnrc_netif
 # Specify the mandatory networking modules for IPv6 and TCP
 USEMODULE += gnrc_ipv6_default
+USEMODULE += gnrc_icmpv6_echo
 USEMODULE += sock_tcp
 USEMODULE += sock_udp
 
-# WolfSSL for TLS support
+# WolfSSL modules
 USEPKG += wolfssl
 USEMODULE += wolfssl
+USEMODULE += wolfssl_tls
+USEMODULE += wolfssl_tls13
 USEMODULE += wolfcrypt
+USEMODULE += wolfcrypt_aes
 USEMODULE += wolfcrypt_rsa
 USEMODULE += wolfcrypt_dh
-USEMODULE += wolfssl
+USEMODULE += wolfcrypt_ecc
+USEMODULE += wolfcrypt_sha
+USEMODULE += wolfcrypt_md5
+USEMODULE += wolfcrypt_hmac
+USEMODULE += wolfcrypt_random
 USEMODULE += wolfssl_dtls
 USEMODULE += wolfssl_psk
 
-# The shell, some shell commands
+# Shell and utils
 USEMODULE += shell
 USEMODULE += shell_cmds_default
 USEMODULE += ps
 
+# Source files
 SRC += main.c
 SRC += tls.c
 
@@ -37,15 +46,23 @@ SRC += tls.c
 USEMODULE += ztimer
 USEMODULE += ztimer_msec
 
+# Network flags
+CFLAGS += -DGNRC_TCP
+
+# Debug flags
+CFLAGS += -DDEBUG_WOLFSSL
+#CFLAGS += -DWOLFSSL_LOG_PRINTF
+#CFLAGS += -DWOLFSSL_DEBUG_TLS
+#CFLAGS += -DHAVE_IO_TIMEOUT
+#CFLAGS += -DTCP_NODELAY
+CFLAGS += -Wno-error=unused-variable
+CFLAGS += -Wno-error=unused-parameter
 CFLAGS += -DGNRC_TCP
 CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
 CFLAGS += -DDTLS_DEFAULT_PORT=$(DTLS_PORT) -DDTLS_WOLFSSL -Wno-unused-parameter -Wno-unused-variable
 
-# Link the WolfSSL library
-#LDLIBS += -lwolfssl
-
-# Enable debug symbols
-#CFLAGS += -DDEBUG
+# Stack sizes
+CFLAGS += -DTHREAD_STACKSIZE_MAIN=10000
 
 # Comment this out to disable code in RIOT that does safety checking
 DEVELHELP ?= 1

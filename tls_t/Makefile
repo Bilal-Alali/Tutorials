@@ -8,52 +8,50 @@ BOARD ?= native
 RIOTBASE ?= $(CURDIR)/../RIOT
 
 # Include packages that pull up and auto-init the link layer.
-# NOTE: 6LoWPAN will be included if IEEE802.15.4 devices are present
 USEMODULE += netdev_default
 USEMODULE += auto_init_gnrc_netif
-# Specify the mandatory networking modules for IPv6 and UDP
+# Specify the mandatory networking modules for IPv6 and TCP
 USEMODULE += gnrc_ipv6_default
-USEMODULE += gnrc_icmpv6_echo
 USEMODULE += sock_tcp
-USEMODULE += gnrc_ipv6
-USEMODULE += sock_tls
+USEMODULE += sock_udp
 
-# TLS module implementation
-# USEMODULE += sock_tls_tcp
+# WolfSSL for TLS support
+USEPKG += wolfssl
+USEMODULE += wolfssl
+USEMODULE += wolfcrypt
+USEMODULE += wolfcrypt_rsa
+USEMODULE += wolfcrypt_dh
+USEMODULE += wolfssl
+USEMODULE += wolfssl_dtls
+USEMODULE += wolfssl_psk
 
-# Add also the shell, some shell commands
+# The shell, some shell commands
 USEMODULE += shell
 USEMODULE += shell_cmds_default
 USEMODULE += ps
 
-USEPKG += wolfssl
-USEMODULE += wolfcrypt
-USEMODULE += wolfssl
-USEMODULE += wolfssl_dtls
-
-# Select public key algorithm (or PSK) support fot ciphersuite(s):
-USEMODULE += wolfcrypt_ecc
-USEMODULE += wolfcrypt_rsa wolfcrypt_dh
-USEMODULE += wolfssl_psk
-USEMODULE += wolfcrypt_rsa
-# Configure wolfSSL (enable TLS 1.2)
-CFLAGS += -DWOLFSSL_TLS13
-CFLAGS += -DWOLFSSL_TLS12
-
-
-# Uncomment the following line to add debug symbols
-#CFLAGS+=-g -ggdb3
+SRC += main.c
+SRC += tls.c
 
 # Timer module
 USEMODULE += ztimer
 USEMODULE += ztimer_msec
+USEMODULE += ztimer_usec
+
+CFLAGS += -DGNRC_TCP
+CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
+CFLAGS += -DDTLS_DEFAULT_PORT=$(DTLS_PORT) -DDTLS_WOLFSSL -Wno-unused-parameter -Wno-unused-variable
+
+# Link the WolfSSL library
+#LDLIBS += -lwolfssl
+
+# Enable debug symbols
+#CFLAGS += -DDEBUG
 
 # Comment this out to disable code in RIOT that does safety checking
-# which is not needed in a production environment but helps in the
-# development process:
 DEVELHELP ?= 1
 
-# Change this to 0 show compiler invocation lines by default:
+# Change this to 0 to show compiler invocation lines by default:
 QUIET ?= 1
 
 include $(RIOTBASE)/Makefile.include
