@@ -15,10 +15,10 @@
 #include "tls.h"
 #include <wolfssl/ssl.h>
 #include "ztimer.h"
-#include "cert_data.h"  /* Include the certificate and key data */
+#include "cert_data.h"
 
 #define SERVER_PORT 12345
-#define SERVER_ADDR "fe80::8a2:81ff:fecd:3113"
+#define SERVER_ADDR "fe80::ad76:27ff:fe38:993e"
 #define BUFFER_SIZE 1024
 
 static int tls_server(int argc, char **argv)
@@ -34,13 +34,11 @@ static int tls_server(int argc, char **argv)
     };
     sock_tcp_t queue_array[1];
 
-    /* Initialize wolfSSL */
     wolfSSL_Init();
     wolfSSL_Debugging_ON();
 
     printf("Server: Starting TLS server on port %d...\n", SERVER_PORT);
 
-    /* Using the certificate and key from cert_data.h */
     int ret = sock_tls_tcp_listen(&tls_queue, &local, queue_array, 1, 0,
                                  wolfTLSv1_2_server_method(),
                                  riot_cert_pem, riot_cert_pem_len,
@@ -59,12 +57,14 @@ static int tls_server(int argc, char **argv)
         ret = sock_tls_tcp_accept(&tls_queue, &client_sock, SOCK_NO_TIMEOUT);
         if (ret < 0) {
             printf("Server: Accept failed: %d\n", ret);
+            // Add delay before retry to prevent tight loop on errors
+            ztimer_sleep(ZTIMER_MSEC, 1000);
             continue;
         }
 
         printf("Server: Client connected, waiting for data...\n");
 
-        char buffer[BUFFER_SIZE];
+        char buffer[256];  // Smaller buffer size
         ssize_t received = sock_tls_tcp_read(client_sock, buffer, sizeof(buffer));
 
         if (received > 0) {
@@ -93,9 +93,12 @@ static int tls_server(int argc, char **argv)
 
 static int tls_client(int argc, char **argv)
 {
-    (void)argc;
-    (void)argv;
+    if (argc < 2) {
+    printf("Usage: tls_client <IPv6 address>\n");
+    return 1;
+    }
 
+    const char *server_ip = argv[1];
     sock_tls_tcp_t tls_sock;
     sock_tcp_ep_t remote = {
         .family = AF_INET6,
@@ -103,7 +106,7 @@ static int tls_client(int argc, char **argv)
         .netif = SOCK_ADDR_ANY_NETIF
     };
 
-    if (ipv6_addr_from_str((ipv6_addr_t *)&remote.addr.ipv6, SERVER_ADDR) == NULL) {
+    if (ipv6_addr_from_str((ipv6_addr_t *)&remote.addr.ipv6, server_ip) == NULL) {
         puts("Client: Error parsing IPv6 address");
         return 1;
     }
@@ -119,7 +122,7 @@ static int tls_client(int argc, char **argv)
         return 1;
     }
 
-    printf("Client: Connecting to server at %s...\n", SERVER_ADDR);
+    printf("Client: Connecting to server at %s...\n", server_ip);
     ret = sock_tls_tcp_connect(&tls_sock, &remote, 0, 0);
     if (ret < 0) {
         printf("Client: Connection failed: %d\n", ret);

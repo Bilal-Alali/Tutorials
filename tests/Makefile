@@ -61,9 +61,6 @@ CFLAGS += -DGNRC_TCP
 CFLAGS += -Wno-error=unused-variable -Wno-error=unused-parameter
 CFLAGS += -DDTLS_DEFAULT_PORT=$(DTLS_PORT) -DDTLS_WOLFSSL -Wno-unused-parameter -Wno-unused-variable
 
-# Stack sizes
-CFLAGS += -DTHREAD_STACKSIZE_MAIN=10000
-
 # Comment this out to disable code in RIOT that does safety checking
 DEVELHELP ?= 1
 

@@ -2,7 +2,7 @@
  * @file tls.c
  * @brief Implementation of TLS over TCP socket using wolfSSL for RIOT OS
  * @author Bilal-Alali
- * @date 2025-04-25 09:15:30
+ * @date 2025-05-14 20:34:59
  */
 
 #include <stdio.h>
@@ -13,42 +13,134 @@
 #include <wolfssl/ssl.h>
 #include <wolfssl/error-ssl.h>
 #include "ztimer.h"
+#include "ca_cert.h"
 #include "debug.h"
 
-#define TLS_DEFAULT_TIMEOUT (60000)  // 30 seconds
+#define TLS_DEFAULT_TIMEOUT (5000)  // 5 seconds
+#define CHUNK_SIZE 256  // Network buffer size
+#define MAX_TRIES 3     // Maximum number of retry attempts
+
+static int test_tcp_connection(sock_tls_tcp_t *sock)
+{
+    printf("Testing TCP connection before TLS handshake...\n");
+
+    const char *test_msg = "TCP test message";
+    char recv_buf[128];
+
+    int ret = sock_tcp_write(&sock->tcp_sock, test_msg, strlen(test_msg));
+    if (ret < 0) {
+        printf("TCP test send failed: %d\n", ret);
+        return ret;
+    }
+    printf("TCP test send successful, sent %d bytes\n", ret);
+
+    ret = sock_tcp_read(&sock->tcp_sock, recv_buf, sizeof(recv_buf), TLS_DEFAULT_TIMEOUT);
+    if (ret < 0) {
+        printf("TCP test receive failed: %d\n", ret);
+        return ret;
+    }
+    printf("TCP test receive successful, got %d bytes: %.*s\n", ret, ret, recv_buf);
+
+    return 0;
+}
+
+
 
 static int _wolfssl_tcp_receive(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
     sock_tls_tcp_t *sock = (sock_tls_tcp_t *)ctx;
-    int ret;
+    int total_received = 0;
+    int remaining = sz;
+    int tries = 0;
 
-    ret = sock_tcp_read(&sock->tcp_sock, buf, sz, TLS_DEFAULT_TIMEOUT);
+    while (remaining > 0 && tries < MAX_TRIES) {
+        // Calculate chunk size for this iteration
+        int chunk_size = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
 
-    if (ret < 0) {
+        int ret = sock_tcp_read(&sock->tcp_sock,
+                              buf + total_received,
+                              chunk_size,
+                              TLS_DEFAULT_TIMEOUT);
+
+        if (ret > 0) {
+            total_received += ret;
+            remaining -= ret;
+            tries = 0;  // Reset tries on successful read
+            continue;
+        }
+
         if (ret == -ETIMEDOUT) {
             printf("TCP Read timeout after %d ms\n", (int)TLS_DEFAULT_TIMEOUT);
-            return WOLFSSL_CBIO_ERR_WANT_READ;  // Changed from GENERAL to WANT_READ
+            tries++;
+            if (total_received > 0) {
+                // If we've received some data, return what we have
+                return total_received;
+            }
+            if (tries >= MAX_TRIES) {
+                return WOLFSSL_CBIO_ERR_TIMEOUT;
+            }
+            continue;
         }
-        printf("TCP Read error: %d\n", ret);
-        return WOLFSSL_CBIO_ERR_GENERAL;
+
+        if (ret < 0) {
+            printf("TCP Read error: %d\n", ret);
+            if (total_received > 0) {
+                // If we've received some data, return what we have
+                return total_received;
+            }
+            return WOLFSSL_CBIO_ERR_GENERAL;
+        }
     }
 
-    return ret;
+    return total_received > 0 ? total_received : WOLFSSL_CBIO_ERR_GENERAL;
 }
 
 static int _wolfssl_tcp_send(WOLFSSL* ssl, char* buf, int sz, void* ctx)
 {
     sock_tls_tcp_t *sock = (sock_tls_tcp_t *)ctx;
-    int ret;
+    int total_sent = 0;
+    int remaining = sz;
+    int tries = 0;
 
-    ret = sock_tcp_write(&sock->tcp_sock, buf, sz);
+    while (remaining > 0 && tries < MAX_TRIES) {
+        // Calculate chunk size for this iteration
+        int chunk_size = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
 
-    if (ret < 0) {
-        printf("TCP Send error: %d\n", ret);
-        return WOLFSSL_CBIO_ERR_GENERAL;
+        int ret = sock_tcp_write(&sock->tcp_sock,
+                                buf + total_sent,
+                                chunk_size);
+
+        if (ret > 0) {
+            total_sent += ret;
+            remaining -= ret;
+            tries = 0;  // Reset tries on successful write
+            continue;
+        }
+
+        if (ret == -EAGAIN || ret == -EWOULDBLOCK) {
+            tries++;
+            if (tries >= MAX_TRIES) {
+                printf("TCP Send failed after %d tries\n", MAX_TRIES);
+                if (total_sent > 0) {
+                    return total_sent;
+                }
+                return WOLFSSL_CBIO_ERR_GENERAL;
+            }
+            // Add a small delay before retrying
+            ztimer_sleep(ZTIMER_MSEC, 100 * tries);
+            continue;
+        }
+
+        if (ret < 0) {
+            printf("TCP Send error: %d\n", ret);
+            if (total_sent > 0) {
+                return total_sent;
+            }
+            return WOLFSSL_CBIO_ERR_GENERAL;
+        }
     }
 
-    return ret;
+    return total_sent > 0 ? total_sent : WOLFSSL_CBIO_ERR_GENERAL;
 }
 
 int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method)
@@ -64,13 +156,23 @@ int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method)
         return -ENOMEM;
     }
 
+    if (wolfSSL_CTX_set_cipher_list(sock->ctx, "AES128-SHA256") != SSL_SUCCESS) {
+        printf("Failed to set cipher list\n");
+        wolfSSL_CTX_free(sock->ctx);
+        return -EINVAL;
+    }
+
+    if (wolfSSL_CTX_load_verify_buffer(sock->ctx,
+                                      ca_cert_pem,
+                                      ca_cert_pem_len,
+                                      SSL_FILETYPE_PEM) != SSL_SUCCESS) {
+        printf("Failed to load CA certificate\n");
+        wolfSSL_CTX_free(sock->ctx);
+        return -EINVAL;
+    }
+
     wolfSSL_SetIORecv(sock->ctx, _wolfssl_tcp_receive);
     wolfSSL_SetIOSend(sock->ctx, _wolfssl_tcp_send);
-
-    /* For clients: disable certificate verification */
-    if (method == wolfTLSv1_2_client_method()) {
-        wolfSSL_CTX_set_verify(sock->ctx, SSL_VERIFY_NONE, NULL);
-    }
 
     sock->ssl = wolfSSL_new(sock->ctx);
     if (!sock->ssl) {
@@ -79,12 +181,14 @@ int sock_tls_tcp_create(sock_tls_tcp_t *sock, WOLFSSL_METHOD *method)
         return -ENOMEM;
     }
 
+    wolfSSL_set_verify(sock->ssl, SSL_VERIFY_PEER, NULL);
+    wolfSSL_Debugging_ON();
+
     return 0;
 }
 
-
 int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote,
-                        uint16_t local_port, uint16_t flags)
+                         uint16_t local_port, uint16_t flags)
 {
     if (!sock || !remote) {
         return -EINVAL;
@@ -98,29 +202,25 @@ int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote,
     }
     printf("Client: TCP connection established\n");
 
-    // Setup SSL/TLS
+    // Test TCP connection before TLS
+    ret = test_tcp_connection(sock);
+    if (ret < 0) {
+        printf("Client: TCP test failed: %d\n", ret);
+        sock_tcp_disconnect(&sock->tcp_sock);
+        return ret;
+    }
+    printf("Client: TCP test successful\n");
+
     wolfSSL_SetIOReadCtx(sock->ssl, sock);
     wolfSSL_SetIOWriteCtx(sock->ssl, sock);
-
-    // Disable certificate verification
-    wolfSSL_set_verify(sock->ssl, SSL_VERIFY_NONE, 0);
-
-    // Set cipher suite
-    const char* cipher_list = "AES128-SHA256";
-    if (wolfSSL_set_cipher_list(sock->ssl, cipher_list) != SSL_SUCCESS) {
-        printf("Client: Failed to set cipher list\n");
-        sock_tcp_disconnect(&sock->tcp_sock);
-        return -EINVAL;
-    }
 
     printf("Client: Starting TLS handshake...\n");
     ret = wolfSSL_connect(sock->ssl);
     if (ret != SSL_SUCCESS) {
         int err = wolfSSL_get_error(sock->ssl, ret);
-        printf("Client: SSL connect error: %d (0x%x)\n", err, err);
-        char error_string[80];
-        wolfSSL_ERR_error_string(err, error_string);
-        printf("Client: Error details: %s\n", error_string);
+        char error_buffer[80];
+        printf("Client: SSL connect error: %d (0x%x) - %s\n",
+               err, err, wolfSSL_ERR_error_string(err, error_buffer));
         sock_tcp_disconnect(&sock->tcp_sock);
         return -ECONNRESET;
     }
@@ -129,54 +229,8 @@ int sock_tls_tcp_connect(sock_tls_tcp_t *sock, const sock_tcp_ep_t *remote,
     printf("Client: Using cipher: %s\n", wolfSSL_get_cipher(sock->ssl));
     return 0;
 }
-int sock_tls_tcp_listen(sock_tls_tcp_queue_t *queue, const sock_tcp_ep_t *local,
-                       sock_tcp_t *queue_array, unsigned queue_len, uint16_t flags,
-                       WOLFSSL_METHOD *method, const unsigned char *cert_buf,
-                       unsigned int cert_len, const unsigned char *key_buf,
-                       unsigned int key_len)
-{
-    if (!queue || !local || !queue_array || queue_len == 0 || !method ||
-        !cert_buf || !cert_len || !key_buf || !key_len) {
-        return -EINVAL;
-    }
 
-    queue->ctx = wolfSSL_CTX_new(method);
-    if (!queue->ctx) {
-        return -ENOMEM;
-    }
-
-    // Set cipher list first
-    if (wolfSSL_CTX_set_cipher_list(queue->ctx, "AES128-SHA256") != SSL_SUCCESS) {
-        wolfSSL_CTX_free(queue->ctx);
-        return -EINVAL;
-    }
-
-    // Set IO callbacks
-    wolfSSL_SetIORecv(queue->ctx, _wolfssl_tcp_receive);
-    wolfSSL_SetIOSend(queue->ctx, _wolfssl_tcp_send);
-
-    // Disable certificate verification
-    wolfSSL_CTX_set_verify(queue->ctx, SSL_VERIFY_NONE, 0);
-
-    // Load certificate
-    if (wolfSSL_CTX_use_certificate_buffer(queue->ctx, cert_buf, cert_len,
-                                         SSL_FILETYPE_PEM) != SSL_SUCCESS) {
-        wolfSSL_CTX_free(queue->ctx);
-        return -EINVAL;
-    }
-
-    // Load private key
-    if (wolfSSL_CTX_use_PrivateKey_buffer(queue->ctx, key_buf, key_len,
-                                         SSL_FILETYPE_PEM) != SSL_SUCCESS) {
-        wolfSSL_CTX_free(queue->ctx);
-        return -EINVAL;
-    }
-
-    return sock_tcp_listen(&queue->tcp_queue, local, queue_array, queue_len, flags);
-}
-
-int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock,
-                       uint32_t timeout)
+int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock, uint32_t timeout)
 {
     int ret;
     sock_tcp_t *tcp_sock = NULL;
@@ -199,7 +253,20 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock,
         return -ENOMEM;
     }
 
+    memset(*sock, 0, sizeof(sock_tls_tcp_t));
     (*sock)->tcp_sock = *tcp_sock;
+
+    // Test TCP connection before TLS
+    ret = test_tcp_connection(*sock);
+    if (ret < 0) {
+        printf("Server: TCP test failed: %d\n", ret);
+        free(*sock);
+        sock_tcp_disconnect(tcp_sock);
+        return ret;
+    }
+    printf("Server: TCP test successful\n");
+
+    (*sock)->ctx = queue->ctx;
     (*sock)->ssl = wolfSSL_new(queue->ctx);
     if (!(*sock)->ssl) {
         free(*sock);
@@ -224,6 +291,51 @@ int sock_tls_tcp_accept(sock_tls_tcp_queue_t *queue, sock_tls_tcp_t **sock,
     printf("Server: TLS handshake successful\n");
     printf("Server: Using cipher: %s\n", wolfSSL_get_cipher((*sock)->ssl));
     return 0;
+}
+
+int sock_tls_tcp_listen(sock_tls_tcp_queue_t *queue, const sock_tcp_ep_t *local,
+                        sock_tcp_t *queue_array, unsigned queue_len, uint16_t flags,
+                        WOLFSSL_METHOD *method, const unsigned char *cert_buf,
+                        unsigned int cert_len, const unsigned char *key_buf,
+                        unsigned int key_len)
+{
+    if (!queue || !local || !queue_array || queue_len == 0 || !method ||
+        !cert_buf || !cert_len || !key_buf || !key_len) {
+        return -EINVAL;
+    }
+
+    wolfSSL_Init();
+
+    queue->ctx = wolfSSL_CTX_new(method);
+    if (!queue->ctx) {
+        return -ENOMEM;
+    }
+
+    if (wolfSSL_CTX_set_cipher_list(queue->ctx, "AES128-SHA256") != SSL_SUCCESS) {
+        wolfSSL_CTX_free(queue->ctx);
+        return -EINVAL;
+    }
+
+    wolfSSL_CTX_set_verify(queue->ctx, SSL_VERIFY_NONE, NULL);
+
+    if (wolfSSL_CTX_use_certificate_buffer(queue->ctx, cert_buf, cert_len,
+        SSL_FILETYPE_PEM) != SSL_SUCCESS) {
+        printf("Server: Failed to load certificate\n");
+        wolfSSL_CTX_free(queue->ctx);
+        return -EINVAL;
+    }
+
+    if (wolfSSL_CTX_use_PrivateKey_buffer(queue->ctx, key_buf, key_len,
+        SSL_FILETYPE_PEM) != SSL_SUCCESS) {
+        printf("Server: Failed to load private key\n");
+        wolfSSL_CTX_free(queue->ctx);
+        return -EINVAL;
+    }
+
+    wolfSSL_SetIORecv(queue->ctx, _wolfssl_tcp_receive);
+    wolfSSL_SetIOSend(queue->ctx, _wolfssl_tcp_send);
+
+    return sock_tcp_listen(&queue->tcp_queue, local, queue_array, queue_len, flags);
 }
 
 ssize_t sock_tls_tcp_read(sock_tls_tcp_t *sock, void *data, size_t max_len)
